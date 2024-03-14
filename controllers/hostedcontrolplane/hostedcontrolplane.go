@@ -225,7 +225,7 @@ func (r *HostedControlPlaneReconciler) buildInternalMonitoringRouteMonitor(route
 			Route: v1alpha1.RouteMonitorRouteSpec{
 				Name:      route.Name,
 				Namespace: route.Namespace,
-				Port:      6443,
+				Port:      int64(hostedcontrolplane.Status.ControlPlaneEndpoint.Port),
 				Suffix:    "/livez",
 			},
 			SkipPrometheusRule: false,
