@@ -102,6 +102,9 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 		finalizer.Remove(hostedcontrolplane, hostedcontrolplaneFinalizer)
 		err = r.Client.Update(ctx, hostedcontrolplane)
+		if err != nil {
+			return utilreconcile.RequeueWith(err)
+		}
 		return utilreconcile.RequeueWith(nil)
 	}
 
@@ -116,7 +119,7 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Check if the HostedControlPlane is ready
 	if !hostedcontrolplane.Status.Ready {
 		log.Info("skipped deploying monitoring objects: HostedControlPlane not ready")
-		utilreconcile.RequeueWith(nil)
+		return utilreconcile.RequeueWith(nil)
 	}
 
 	log.Info("Deploying internal monitoring objects")
