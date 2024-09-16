@@ -18,12 +18,14 @@ import (
 	routemonitorv1alpha1 "github.com/openshift/route-monitor-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	kubev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -97,6 +99,11 @@ var _ = Describe("Route Monitor Operator", Ordered, func() {
 					{
 						Name:  "test",
 						Image: "quay.io/jitesoft/nginx:mainline",
+						SecurityContext: &v1.SecurityContext{
+							AllowPrivilegeEscalation: pointer.Bool(false),
+							Capabilities: &v1.Capabilities{Drop: []v1.Capability{"ALL"}},
+							SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
+						},
 					},
 				},
 			},
