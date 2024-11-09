@@ -2,11 +2,13 @@ package util
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 
 	compare "github.com/hashicorp/go-version"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -50,28 +52,20 @@ func IsClusterVersionHigherOrEqualThan(kclient client.Client, givenVersionStr st
 
 // ClusterHasPrivateNLB checks whether the default ingress is private and an aws NLB
 // Returns false if there's an exception
-func ClusterHasPrivateNLB(kclient client.Client) (result bool) {
-	// Recovers if one of the IngressController fields are nil
-	defer func() {
-		if r := recover(); r != nil {
-			result = false
-		}
-	}()
+func ClusterHasPrivateNLB(kclient client.Client) (bool, error) {
+	ingresscontrollerName      := "default"
+	ingresscontrollerNamespace := "openshift-ingress-operator"
+	ic                         := &operatorv1.IngressController{}
 
-	i := &operatorv1.IngressController{}
-	err := kclient.Get(context.TODO(), client.ObjectKey{
-		Namespace: "openshift-ingress-operator",
-		Name:      "default",
-	}, i)
+	err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontrollerNamespace, Name: ingresscontrollerName}, ic)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("failed to retrieve ingresscontroller '%s/%s': %v", ingresscontrollerNamespace, ingresscontrollerName, err)
 	}
 
-	if i.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer &&
-		i.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
-		return true
-
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+		return true, nil
 	}
 
-	return false
+	return false, nil
 }
