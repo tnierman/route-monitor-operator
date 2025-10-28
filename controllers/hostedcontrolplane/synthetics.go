@@ -302,9 +302,22 @@ func (r *HostedControlPlaneReconciler) ensureRHOBSProbe(ctx context.Context, log
 				return fmt.Errorf("failed to delete failed probe: %w", err)
 			}
 			// Continue to create new probe below
+
 		} else {
+			// Probe exists - validate that it's configured correctly according to the hostedcontrolplane object
 			log.V(2).Info("RHOBS probe already exists", "cluster_id", clusterID, "probe_id", existingProbe.ID, "status", existingProbe.Status)
-			return nil
+			if isPrivateProbe(existingProbe) == isPrivate {
+				// Probe already configured correctly, return
+				return nil
+			}
+
+			// Probe configuration incorrect or out-of-date: delete and recreate
+			log.Info("RHOBS probe 'private' label does not match hostedcontrolplane configuration, possibly due to API publishing strategy change in OCM. Deleting RHOBS probe in order to recreate in the correct cell", "probe", existingProbe)
+			err = client.DeleteProbe(ctx, clusterID)
+			if err != nil {
+				return fmt.Errorf("failed to delete RHOBS probe: %w", err)
+			}
+			// Continue to create new probe below
 		}
 	}
 
@@ -357,4 +370,8 @@ func (r *HostedControlPlaneReconciler) createRHOBSClient(log logr.Logger) *rhobs
 
 	log.V(2).Info("Creating RHOBS client without authentication")
 	return rhobs.NewClient(r.RHOBSConfig.ProbeAPIURL, r.RHOBSConfig.Tenant, log)
+}
+
+func isPrivateProbe(probe *rhobs.ProbeResponse) bool {
+	return probe.Labels["private"] == "true"
 }
