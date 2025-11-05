@@ -26,6 +26,7 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 	"github.com/openshift/route-monitor-operator/api/v1alpha1"
+	"github.com/openshift/route-monitor-operator/pkg/dynatrace"
 	"github.com/openshift/route-monitor-operator/pkg/util/finalizer"
 	utilreconcile "github.com/openshift/route-monitor-operator/pkg/util/reconcile"
 
@@ -48,22 +49,12 @@ import (
 const (
 	// hostedcontrolplaneFinalizer defines the finalizer used by this controller's objects
 	hostedcontrolplaneFinalizer = "hostedcontrolplane.routemonitoroperator.monitoring.openshift.io/finalizer"
-
 	// watchResourceLabel is a label key indicating which objects this controller should reconcile against
 	watchResourceLabel = "hostedcontrolplane.routemonitoroperator.monitoring.openshift.io/managed"
-
-	//fetch dynatrace secret to get dynatrace api token and tenant url
-	dynatraceSecretNamespace = "openshift-route-monitor-operator"
-	dynatraceSecretName      = "dynatrace-token" // nolint:gosec // Not a hardcoded credential
-	dynatraceApiKey          = "apiToken"
-	dynatraceTenantKey       = "apiUrl"
-
 	// Retry timeout configuration
 	retryTimeoutMinutes = 5
-
 	// VPC endpoint readiness retry timeout
 	vpcEndpointRetryTimeout = retryTimeoutMinutes * time.Minute
-
 	// RHOBS API retry timeout for non-200 responses
 	rhobsAPIRetryTimeout = retryTimeoutMinutes * time.Minute
 )
@@ -73,17 +64,24 @@ var logger logr.Logger = ctrl.Log.WithName("controllers").WithName("HostedContro
 // HostedControlPlaneReconciler reconciles a HostedControlPlane object
 type HostedControlPlaneReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	RHOBSConfig RHOBSConfig
+	dynatraceClient *dynatrace.DynatraceApiClient
+	Scheme          *runtime.Scheme
+	RHOBSConfig     RHOBSConfig
 }
 
 // NewHostedControlPlaneReconciler creates a HostedControlPlaneReconciler
-func NewHostedControlPlaneReconciler(mgr manager.Manager, rhobsConfig RHOBSConfig) *HostedControlPlaneReconciler {
-	return &HostedControlPlaneReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		RHOBSConfig: rhobsConfig,
+func NewHostedControlPlaneReconciler(mgr manager.Manager, rhobsConfig RHOBSConfig) (*HostedControlPlaneReconciler, error) {
+	dynatraceClient, err := newDynatraceApiClient(context.Background(), mgr.GetClient())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Dynatrace client: %w", err)
 	}
+	r := &HostedControlPlaneReconciler{
+		Client:          mgr.GetClient(),
+		dynatraceClient: dynatraceClient,
+		Scheme:          mgr.GetScheme(),
+		RHOBSConfig:     rhobsConfig,
+	}
+	return r, nil
 }
 
 //+kubebuilder:rbac:groups=openshift.io,resources=hostedcontrolplanes,verbs=get;list;watch;create;update;patch;delete
@@ -108,21 +106,15 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return utilreconcile.RequeueWith(err)
 	}
 
-	//Create Dynatrace API client
-	dynatraceApiClient, err := r.NewDynatraceApiClient(ctx)
-	if err != nil {
-		log.Error(err, "failed to create dynatrace client")
-		return utilreconcile.RequeueWith(err)
-	}
-
 	// If the HostedControlPlane is marked for deletion, clean up
 	shouldDelete := finalizer.WasDeleteRequested(hostedcontrolplane)
 	if shouldDelete {
-		err = r.deleteDynatraceHttpMonitorResources(dynatraceApiClient, log, hostedcontrolplane)
+		err = r.deleteDynatraceHttpMonitorResources(hostedcontrolplane)
 		if err != nil {
 			log.Error(err, "failed to delete Dynatrace HTTP Monitor Resources")
 			return utilreconcile.RequeueWith(err)
 		}
+		log.Info("Successfully deleted HTTP monitor(s)")
 
 		// Delete RHOBS probe if API URL is configured
 		if r.RHOBSConfig.ProbeAPIURL != "" {
@@ -189,7 +181,7 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	log.Info("Deploying HTTP Monitor Resources")
-	err = r.deployDynatraceHttpMonitorResources(ctx, dynatraceApiClient, log, hostedcontrolplane)
+	err = r.deployDynatraceHttpMonitorResources(ctx, log, hostedcontrolplane)
 	if err != nil {
 		log.Error(err, "failed to deploy Dynatrace HTTP Monitor Resources")
 		return utilreconcile.RequeueWith(err)

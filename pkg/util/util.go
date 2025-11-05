@@ -3,6 +3,8 @@ package util
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"regexp"
 
 	compare "github.com/hashicorp/go-version"
@@ -81,4 +83,16 @@ func ClusterHasPrivateNLB(kclient client.Client) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// defaultKubernetesNamespaceFile defines the path to the 'namespace' file automatically mounted by the kubelet to every pod.
+// It indicates which namespace the pod is currently running in.
+const defaultKubernetesNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+func CurrentNamespace() (string, error) {
+	namespaceBytes, err := os.ReadFile(defaultKubernetesNamespaceFile)
+	if err != nil {
+		return "", err
+	}
+	return string(namespaceBytes), nil
 }

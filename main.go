@@ -276,7 +276,10 @@ func main() {
 			OIDCIssuerURL:      oidcIssuerURL,
 			OnlyPublicClusters: onlyPublicClusters,
 		}
-		hostedControlPlaneReconciler := hostedcontrolplane.NewHostedControlPlaneReconciler(mgr, rhobsConfig)
+		hostedControlPlaneReconciler, err := hostedcontrolplane.NewHostedControlPlaneReconciler(mgr, rhobsConfig)
+		if err != nil {
+			setupLog.Error(err, "unable to create reconciler", "reconciler", "HostedControlPlane")
+		}
 		if err = hostedControlPlaneReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "HostedControlPlane")
 			os.Exit(1)

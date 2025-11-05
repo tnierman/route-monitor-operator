@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hypershiftv1beta1 "github.com/openshift/hypershift/api/hypershift/v1beta1"
 
@@ -32,11 +33,18 @@ import (
 
 	dynatrace "github.com/openshift/route-monitor-operator/pkg/dynatrace"
 	"github.com/openshift/route-monitor-operator/pkg/rhobs"
+	"github.com/openshift/route-monitor-operator/pkg/util"
 )
 
-func (r *HostedControlPlaneReconciler) NewDynatraceApiClient(ctx context.Context) (*dynatrace.DynatraceApiClient, error) {
+const (
+	dynatraceSecretName = "dynatrace-token"
+	dynatraceApiKey     = "apiToken"
+	dynatraceTenantKey  = "apiUrl"
+)
+
+func newDynatraceApiClient(ctx context.Context, kubeClient client.Client) (*dynatrace.DynatraceApiClient, error) {
 	//Create Dynatrace API client
-	apiToken, tenant, err := r.getDynatraceSecrets(ctx)
+	apiToken, tenant, err := getDynatraceSecrets(ctx, kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret for Dynatrace API client: %w", err)
 	}
@@ -46,11 +54,15 @@ func (r *HostedControlPlaneReconciler) NewDynatraceApiClient(ctx context.Context
 	return dynatraceApiClient, nil
 }
 
-func (r *HostedControlPlaneReconciler) getDynatraceSecrets(ctx context.Context) (string, string, error) {
-	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: dynatraceSecretName, Namespace: dynatraceSecretNamespace}, secret)
+func getDynatraceSecrets(ctx context.Context, kubeClient client.Client) (string, string, error) {
+	dynatraceSecretNamespace, err := util.CurrentNamespace()
 	if err != nil {
-		return "", "", fmt.Errorf("error getting Kubernetes secret: %v", err)
+		return "", "", fmt.Errorf("failed to determine current pod namespace: %w", err)
+	}
+	secret := &corev1.Secret{}
+	err = kubeClient.Get(ctx, types.NamespacedName{Name: dynatraceSecretName, Namespace: dynatraceSecretNamespace}, secret)
+	if err != nil {
+		return "", "", fmt.Errorf("error getting Kubernetes secret: %w", err)
 	}
 
 	apiTokenBytes, ok := secret.Data[dynatraceApiKey]
@@ -165,7 +177,7 @@ func determineDynatraceClusterRegionName(clusterRegion string, monitorLocationTy
 	}
 }
 
-func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx context.Context, dynatraceApiClient *dynatrace.DynatraceApiClient, log logr.Logger, hostedcontrolplane *hypershiftv1beta1.HostedControlPlane) error {
+func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx context.Context, log logr.Logger, hostedcontrolplane *hypershiftv1beta1.HostedControlPlane) error {
 	apiServerHostname, err := GetAPIServerHostname(hostedcontrolplane)
 	if err != nil {
 		return fmt.Errorf("failed to get APIServer hostname %v", err)
@@ -185,7 +197,7 @@ func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx c
 		return fmt.Errorf("error calling determineDynatraceClusterRegionId: %v", err)
 	}
 
-	locationId, err := dynatraceApiClient.GetLocationEntityIdFromDynatrace(dynatraceClusterRegionName, monitorLocationType)
+	locationId, err := r.dynatraceClient.GetLocationEntityIdFromDynatrace(dynatraceClusterRegionName, monitorLocationType)
 	if err != nil {
 		return fmt.Errorf("error calling GetLocationEntityIdFromDynatrace: %v", err)
 	}
@@ -196,7 +208,7 @@ func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx c
 	}
 
 	// Check for existing monitors
-	monitors, err := dynatraceApiClient.ListDynatraceHttpMonitorsForCluster(clusterID)
+	monitors, err := r.dynatraceClient.ListDynatraceHttpMonitorsForCluster(clusterID)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve existing HTTP monitors from Dynatrace for cluster %q: %w", clusterID, err)
 	}
@@ -204,14 +216,14 @@ func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx c
 	if len(monitors) > 0 {
 		// Cleanup excess HTTP Monitors, if any exist
 		if len(monitors) > 1 {
-			err = removeDyntraceMonitors(dynatraceApiClient, monitors[1:])
+			err = removeDyntraceMonitors(r.dynatraceClient, monitors[1:])
 			if err != nil {
 				// log any errors regarding extra-monitor cleanup, but do not block further action
 				log.Error(err, "failed to cleanup excess Dynatrace monitors")
 			}
 		}
 
-		existingMonitor, err := dynatraceApiClient.GetDynatraceHttpMonitor(monitors[0].EntityId)
+		existingMonitor, err := r.dynatraceClient.GetDynatraceHttpMonitor(monitors[0].EntityId)
 		if err != nil {
 			return fmt.Errorf("failed to retrieve existing monitor %q (ID=%q) from Dynatrace: %w", existingMonitor.Name, existingMonitor.EntityId, err)
 		}
@@ -223,13 +235,13 @@ func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx c
 		log.Info(fmt.Sprintf("monitor location needs to be updated, possibly due to API publishing strategy change in OCM. Deleting Dynatrace HTTP monitor %q in order to recreate in the correct synthetic location", existingMonitor.Name))
 		log.V(2).Info("current location(s) is %v, should be %q", existingMonitor.Locations, locationId)
 
-		err = dynatraceApiClient.DeleteSingleMonitor(existingMonitor.EntityId)
+		err = r.dynatraceClient.DeleteSingleMonitor(existingMonitor.EntityId)
 		if err != nil {
 			return fmt.Errorf("failed to delete HTTP monitor %q (ID=%q) from Dynatrace: %w", existingMonitor.Name, existingMonitor.EntityId, err)
 		}
 	}
 
-	monitorId, err := dynatraceApiClient.CreateDynatraceHttpMonitor(monitorName, apiUrl, clusterID, locationId, clusterRegion)
+	monitorId, err := r.dynatraceClient.CreateDynatraceHttpMonitor(monitorName, apiUrl, clusterID, locationId, clusterRegion)
 	if err != nil {
 		return fmt.Errorf("error creating HTTP monitor %q: %w", monitorName, err)
 	}
@@ -238,14 +250,13 @@ func (r *HostedControlPlaneReconciler) deployDynatraceHttpMonitorResources(ctx c
 	return nil
 }
 
-func (r *HostedControlPlaneReconciler) deleteDynatraceHttpMonitorResources(dynatraceApiClient *dynatrace.DynatraceApiClient, log logr.Logger, hostedcontrolplane *hypershiftv1beta1.HostedControlPlane) error {
+func (r *HostedControlPlaneReconciler) deleteDynatraceHttpMonitorResources(hostedcontrolplane *hypershiftv1beta1.HostedControlPlane) error {
 	clusterId := hostedcontrolplane.Spec.ClusterID
 
-	err := dynatraceApiClient.DeleteDynatraceMonitorByCluserId(clusterId)
+	err := r.dynatraceClient.DeleteDynatraceMonitorByCluserId(clusterId)
 	if err != nil {
 		return fmt.Errorf("error deleting HTTP monitor(s). Status Code: %v", err)
 	}
-	log.Info("Successfully deleted HTTP monitor(s)")
 	return nil
 }
 
