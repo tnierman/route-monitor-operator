@@ -20,6 +20,7 @@ prompt: |
   10. Create a pull request using `gh pr create` targeting the `master` branch
 
   Only update go.mod and go.sum — do not modify any Go source files.
+llm_model: "claude-sonnet-4-5@20250929"
 providers:
   - vertex
 payloads:
