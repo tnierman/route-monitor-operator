@@ -1,0 +1,31 @@
+kind: Agent
+name: golang-update
+description: "Update Go version to latest stable and push branch to fork"
+prompt: |
+  You are maintaining the route-monitor-operator repository.
+  Your task is to update the Go version to the latest stable release.
+
+  Steps:
+  1. Check the current Go version in go.mod
+  2. Check the latest stable Go version by running:
+     curl -s https://go.dev/dl/?mode=json | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['version'].replace('go',''))"
+  3. If already on the latest version, report that and exit
+  4. Update the `go` directive in go.mod to the latest version
+  5. Run `go mod tidy` to update go.sum
+  6. Check if the project builds: `go build ./...`
+  7. Create a new branch: `git checkout -b update-golang-<version>`
+  8. Stage and commit: `git add go.mod go.sum` then commit with message
+     "chore: update Go to <version>"
+  9. Push the branch: `git push origin HEAD`
+  10. Create a pull request using `gh pr create` targeting the `master` branch
+
+  Only update go.mod and go.sum — do not modify any Go source files.
+providers:
+  - vertex
+payloads:
+  - sandbox_path: /workspace
+    repo_url: https://github.com/tnierman/route-monitor-operator.git
+    ref: master
+labels:
+  task: golang-update
+  repo: route-monitor-operator

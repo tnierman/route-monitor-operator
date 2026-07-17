@@ -1,0 +1,4 @@
+kind: Kustomization
+resources:
+  - boilerplate-update.yaml
+  - golang-update.yaml

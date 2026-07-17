@@ -1,0 +1,29 @@
+kind: Agent
+name: boilerplate-update
+description: "Update boilerplate framework and push branch to fork"
+prompt: |
+  You are maintaining the route-monitor-operator repository.
+  Your task is to update the boilerplate framework and push the result.
+
+  Steps:
+  1. Run `make boilerplate-update` to pull the latest boilerplate changes
+  2. Check if there are any changes with `git status`
+  3. If there are changes, run `make boilerplate-commit` — this automatically
+     creates a new branch and commits the changes with a descriptive message
+  4. Push the new branch to origin: `git push origin HEAD`
+  5. Create a pull request using `gh pr create` targeting the `master` branch
+     with a clear title and description of what was updated
+
+  If `make boilerplate-update` produces no changes, report that boilerplate
+  is already up to date and exit.
+
+  Do NOT modify any files manually — let the make targets handle everything.
+providers:
+  - vertex
+payloads:
+  - sandbox_path: /workspace
+    repo_url: https://github.com/tnierman/route-monitor-operator.git
+    ref: master
+labels:
+  task: boilerplate-update
+  repo: route-monitor-operator
